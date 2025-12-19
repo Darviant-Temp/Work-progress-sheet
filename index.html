@@ -11,6 +11,7 @@
         .login-container { max-width: 400px; margin: 100px auto; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         .log-card { border-left: 5px solid #0d6efd; margin-bottom: 10px; }
         .role-badge { font-size: 0.8em; text-transform: uppercase; letter-spacing: 1px; }
+        .admin-card { border-top: 4px solid #ffc107; }
     </style>
 </head>
 <body>
@@ -41,8 +42,9 @@
 
         <div class="row">
             <div class="col-md-4">
-                <div class="card p-3 mb-3">
-                    <h5>📝 Log Work</h5>
+                
+                <div id="logWorkCard" class="card p-3 mb-3">
+                    <h5>📝 Log My Work</h5>
                     <form id="workForm">
                         <div class="mb-2">
                             <label>Duration (Hours)</label>
@@ -52,13 +54,13 @@
                             <label>Description</label>
                             <textarea id="workDesc" class="form-control" rows="3" required></textarea>
                         </div>
-                        <button type="submit" class="btn btn-success w-100">Submit Log (Permanent)</button>
+                        <button type="submit" class="btn btn-success w-100">Submit Log</button>
                     </form>
                 </div>
 
-                <div id="adminPanel" class="card p-3 mb-3 border-warning hidden">
-                    <h5 class="text-warning">⚡ Admin Panel</h5>
-                    <p class="small text-muted">Add new employee/HR credentials.</p>
+                <div id="adminToolsCard" class="card p-3 mb-3 admin-card hidden">
+                    <h5 class="text-warning">⚡ Create New User</h5>
+                    <p class="small text-muted">System will not logout after creation.</p>
                     <input type="email" id="newEmail" class="form-control mb-2" placeholder="New Email">
                     <input type="password" id="newPass" class="form-control mb-2" placeholder="New Password">
                     <input type="text" id="newName" class="form-control mb-2" placeholder="Full Name">
@@ -72,10 +74,21 @@
             </div>
 
             <div class="col-md-8">
+                
+                <div id="searchPanel" class="card p-3 mb-3 hidden bg-light">
+                    <label class="form-label fw-bold">🔍 Search Employee Work</label>
+                    <div class="input-group">
+                        <input type="text" id="searchInput" class="form-control" placeholder="Enter Exact Name or User ID...">
+                        <button class="btn btn-primary" onclick="searchLogs()">Search</button>
+                        <button class="btn btn-outline-secondary" onclick="resetSearch()">Clear</button>
+                    </div>
+                    <small class="text-muted">MD View: Search to see data. HR View: Search to see others.</small>
+                </div>
+
                 <div class="card p-3">
                     <div class="d-flex justify-content-between">
-                        <h5>Work History</h5>
-                        <button class="btn btn-sm btn-light" onclick="loadLogs()">Refresh</button>
+                        <h5 id="listTitle">Work History</h5>
+                        <button class="btn btn-sm btn-light" onclick="loadLogs()">Refresh List</button>
                     </div>
                     <hr>
                     <div id="logsList" style="max-height: 600px; overflow-y: auto;">
@@ -86,11 +99,11 @@
     </div>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { initializeApp, deleteApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, doc, getDoc, setDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // --- YOUR CONFIGURATION ---
+        // --- PASTE YOUR CONFIG HERE ---
         const firebaseConfig = {
           apiKey: "AIzaSyAgmgOG0I5p2VsedQXorr4xq7fvKOvPRCY",
           authDomain: "work-sheet-4e4b0.firebaseapp.com",
@@ -101,6 +114,7 @@
           measurementId: "G-HH40E4PMM1"
         };
 
+        // Main App Instance
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
@@ -108,10 +122,8 @@
         let currentUserRole = null;
         let currentUserId = null;
 
-        // --- AUTHENTICATION ---
-        const loginForm = document.getElementById('loginForm');
-        
-        loginForm.addEventListener('submit', async (e) => {
+        // --- LOGIN LOGIC ---
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const email = document.getElementById('loginEmail').value;
             const pass = document.getElementById('loginPass').value;
@@ -124,26 +136,22 @@
 
         window.logout = () => signOut(auth);
 
-        // --- AUTH STATE LISTENER ---
+        // --- AUTH LISTENER ---
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 document.getElementById('loginSection').classList.add('hidden');
                 document.getElementById('dashboardSection').classList.remove('hidden');
                 currentUserId = user.uid;
                 
-                // Fetch Role
                 const userDoc = await getDoc(doc(db, "users", user.uid));
                 if (userDoc.exists()) {
                     const userData = userDoc.data();
-                    currentUserRole = userData.role; // 'Employee', 'HR', 'MD'
+                    currentUserRole = userData.role;
                     
                     document.getElementById('userNameDisplay').innerText = userData.name;
                     document.getElementById('userRoleDisplay').innerText = currentUserRole;
                     
-                    setupUIBasedOnRole();
-                    loadLogs();
-                } else {
-                    alert("User profile not found. Please contact Admin.");
+                    setupUI();
                 }
             } else {
                 document.getElementById('loginSection').classList.remove('hidden');
@@ -151,26 +159,47 @@
             }
         });
 
-        // --- ROLE BASED UI ---
-        function setupUIBasedOnRole() {
-            const adminPanel = document.getElementById('adminPanel');
+        // --- UI SETUP BASED ON ROLE ---
+        function setupUI() {
+            const logCard = document.getElementById('logWorkCard');
+            const adminCard = document.getElementById('adminToolsCard');
+            const searchPanel = document.getElementById('searchPanel');
             const roleSelect = document.getElementById('newRole');
             
-            // Clean slate options
+            // Default states
+            logCard.classList.remove('hidden');
+            adminCard.classList.add('hidden');
+            searchPanel.classList.add('hidden');
             roleSelect.innerHTML = '<option value="Employee">Employee</option>';
 
+            // 1. MD LOGIC
             if (currentUserRole === 'MD') {
-                adminPanel.classList.remove('hidden');
-                roleSelect.innerHTML += '<option value="HR">HR</option>'; // MD can add HRs
-            } else if (currentUserRole === 'HR') {
-                adminPanel.classList.remove('hidden');
-                // HR cannot see 'HR' option, only Employee
-            } else {
-                adminPanel.classList.add('hidden');
+                logCard.classList.add('hidden'); // MD doesn't log work
+                adminCard.classList.remove('hidden'); // Can create users
+                searchPanel.classList.remove('hidden'); // Can search
+                roleSelect.innerHTML += '<option value="HR">HR</option>';
+                
+                // MD sees nothing initially (Clean Dashboard)
+                document.getElementById('logsList').innerHTML = '<p class="text-muted text-center mt-4">Enter a Name or ID above to view work progress.</p>';
+                return; 
+            }
+
+            // 2. HR LOGIC
+            if (currentUserRole === 'HR') {
+                adminCard.classList.remove('hidden'); // Can create Employees
+                searchPanel.classList.remove('hidden'); // Can search
+                // HR sees their own logs by default
+                loadLogs(); 
+            }
+
+            // 3. EMPLOYEE LOGIC
+            if (currentUserRole === 'Employee') {
+                // Default is fine (Log Card Visible, Admin/Search Hidden)
+                loadLogs();
             }
         }
 
-        // --- LOGIC: CREATE NEW USER ---
+        // --- CREATE USER (NO LOGOUT FIX) ---
         window.createNewUser = async () => {
             const email = document.getElementById('newEmail').value;
             const pass = document.getElementById('newPass').value;
@@ -179,18 +208,20 @@
 
             if(!email || !pass || !name) return alert("Fill all fields");
 
-            // Security check
             if(currentUserRole === 'Employee') return alert("Unauthorized");
             if(currentUserRole === 'HR' && role === 'HR') return alert("HR cannot create HR");
 
             const currentAdminEmail = auth.currentUser.email; 
             
-            if(confirm(`This will create ${role}: ${name}. Proceed?`)) {
+            if(confirm(`Create ${role}: ${name}?`)) {
                 try {
-                    // 1. Create Auth User (This logs us out!)
-                    const userCred = await createUserWithEmailAndPassword(auth, email, pass);
+                    // TRICK: Create a secondary app instance to create user without logging out main admin
+                    const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp");
+                    const secondaryAuth = getAuth(secondaryApp);
                     
-                    // 2. Write User Profile to Database
+                    const userCred = await createUserWithEmailAndPassword(secondaryAuth, email, pass);
+                    
+                    // Write to DB using MAIN app connection
                     await setDoc(doc(db, "users", userCred.user.uid), {
                         name: name,
                         role: role,
@@ -198,15 +229,24 @@
                         createdBy: currentAdminEmail
                     });
 
-                    alert("User Created! You have been logged out (Security Protocol). Please log back in as Admin.");
-                    window.location.reload(); 
+                    // Cleanup secondary app
+                    await signOut(secondaryAuth);
+                    await deleteApp(secondaryApp);
+
+                    alert("User Created Successfully! You can continue working.");
+                    
+                    // Clear fields
+                    document.getElementById('newEmail').value = "";
+                    document.getElementById('newPass').value = "";
+                    document.getElementById('newName').value = "";
+
                 } catch (e) {
                     alert("Error: " + e.message);
                 }
             }
         };
 
-        // --- LOGIC: SUBMIT WORK ---
+        // --- SUBMIT WORK ---
         document.getElementById('workForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const duration = document.getElementById('workDuration').value;
@@ -221,33 +261,69 @@
                     timestamp: serverTimestamp()
                 });
                 document.getElementById('workForm').reset();
-                loadLogs(); // Refresh list
+                if(currentUserRole !== 'MD') loadLogs(); // Refresh if not MD
             } catch (error) {
                 alert("Error submitting: " + error.message);
             }
         });
 
-        // --- LOGIC: LOAD LOGS ---
-        window.loadLogs = async () => {
+        // --- SEARCH LOGIC ---
+        window.searchLogs = async () => {
+            const term = document.getElementById('searchInput').value.trim();
+            if(!term) return alert("Please enter a name or ID");
+            loadLogs(term);
+        }
+
+        window.resetSearch = () => {
+            document.getElementById('searchInput').value = "";
+            if(currentUserRole === 'MD') {
+                 document.getElementById('logsList').innerHTML = '<p class="text-muted text-center mt-4">Enter a Name or ID above to view work progress.</p>';
+            } else {
+                loadLogs(); // HR/Employee go back to own logs
+            }
+        }
+
+        // --- LOAD LOGS (With Search Filter) ---
+        window.loadLogs = async (searchTerm = null) => {
             const list = document.getElementById('logsList');
             list.innerHTML = '<p>Loading...</p>';
             
             let q;
-            // Employees see only their own. HR/MD see all.
-            if (currentUserRole === 'Employee') {
-                q = query(collection(db, "work_logs"), where("uid", "==", currentUserId), orderBy("timestamp", "desc"));
-            } else {
-                q = query(collection(db, "work_logs"), orderBy("timestamp", "desc"));
+            const logsRef = collection(db, "work_logs");
+
+            // 1. IF SEARCHING (For HR/MD)
+            if (searchTerm && (currentUserRole === 'HR' || currentUserRole === 'MD')) {
+                // Try searching by exact Name first
+                q = query(logsRef, where("name", "==", searchTerm), orderBy("timestamp", "desc"));
+                // Note: If you want to search by UID, you'd swap "name" for "uid"
+            } 
+            // 2. EMPLOYEE (Always own logs)
+            else if (currentUserRole === 'Employee') {
+                q = query(logsRef, where("uid", "==", currentUserId), orderBy("timestamp", "desc"));
+            }
+            // 3. HR DEFAULT (Own logs)
+            else if (currentUserRole === 'HR') {
+                q = query(logsRef, where("uid", "==", currentUserId), orderBy("timestamp", "desc"));
+            }
+            // 4. MD DEFAULT (Clean - handled in setupUI, but if triggered manually:)
+            else if (currentUserRole === 'MD') {
+                 list.innerHTML = '<p class="text-muted text-center mt-4">Please use the Search Bar.</p>';
+                 return;
             }
 
             try {
                 const querySnapshot = await getDocs(q);
+                
+                if (querySnapshot.empty) {
+                    list.innerHTML = '<p class="text-muted">No logs found.</p>';
+                    return;
+                }
+
                 list.innerHTML = '';
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
                     const date = data.timestamp ? data.timestamp.toDate().toLocaleString() : 'Just now';
                     
-                    // Delete Button (MD Only)
                     let deleteBtn = '';
                     if (currentUserRole === 'MD') {
                         deleteBtn = `<button class="btn btn-danger btn-sm float-end" onclick="deleteLog('${docSnap.id}')">Delete</button>`;
@@ -267,24 +343,21 @@
                 });
             } catch (e) {
                 console.error(e);
-                list.innerHTML = `<p class="text-danger">Access Denied: You do not have permission to view these logs.</p>`;
+                list.innerHTML = `<p class="text-danger">Search Error: ${e.message}</p>`;
+                // Fallback for indexing errors
+                if(e.message.includes("requires an index")) {
+                    alert("Admin Note: First search might fail. Check browser console for the Index Link from Firebase.");
+                }
             }
         };
 
-        // --- LOGIC: DELETE LOG (MD ONLY) ---
         window.deleteLog = async (id) => {
             if (currentUserRole !== 'MD') return;
-
-            // Double Confirmation
-            if (confirm("Are you sure you want to delete this log?")) {
-                if (confirm("FINAL WARNING: This cannot be undone. Delete permanently?")) {
-                    try {
-                        await deleteDoc(doc(db, "work_logs", id));
-                        loadLogs();
-                    } catch (e) {
-                        alert("Error: " + e.message);
-                    }
-                }
+            if (confirm("Delete this log permanently?")) {
+                await deleteDoc(doc(db, "work_logs", id));
+                // Refresh based on what we are currently viewing
+                const term = document.getElementById('searchInput').value;
+                loadLogs(term); 
             }
         }
     </script>
