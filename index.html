@@ -19,7 +19,7 @@
 
     <div id="loginSection" class="container login-container">
         <h3 class="text-center mb-4">Work Tracker Login</h3>
-        <form id="loginForm">
+        <div id="loginForm">
             <div class="mb-3">
                 <label>Email ID</label>
                 <input type="email" id="loginEmail" class="form-control" required placeholder="id@company.com">
@@ -28,8 +28,8 @@
                 <label>Password</label>
                 <input type="password" id="loginPass" class="form-control" required>
             </div>
-            <button type="submit" class="btn btn-primary w-100">Login</button>
-        </form>
+            <button type="button" onclick="loginSystem()" class="btn btn-primary w-100">Login</button>
+        </div>
     </div>
 
     <div id="dashboardSection" class="container mt-4 hidden">
@@ -117,7 +117,12 @@
         import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
         import { getFirestore, collection, addDoc, getDocs, query, where, orderBy, doc, getDoc, setDoc, updateDoc, deleteDoc, serverTimestamp, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-        // --- PASTE YOUR CONFIG HERE ---
+        // GLOBAL ERROR CATCHER
+        window.onerror = function(message, source, lineno, colno, error) {
+            alert("SYSTEM ERROR:\n" + message);
+        };
+
+        // --- CONFIGURATION ---
         const firebaseConfig = {
           apiKey: "AIzaSyAgmgOG0I5p2VsedQXorr4xq7fvKOvPRCY",
           authDomain: "work-sheet-4e4b0.firebaseapp.com",
@@ -128,23 +133,36 @@
           measurementId: "G-HH40E4PMM1"
         };
 
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        let app, auth, db;
+        try {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            console.log("Firebase initialized successfully");
+        } catch(e) {
+            alert("Firebase Failed to Load: " + e.message);
+        }
 
         let currentUserRole = null;
         let currentUserId = null;
         let searchedUserUid = null;
         let searchedUserIsBlocked = false;
 
-        // --- LOGIN ---
-        document.getElementById('loginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
+        // --- ROBUST LOGIN FUNCTION ---
+        window.loginSystem = async () => {
             const email = document.getElementById('loginEmail').value;
             const pass = document.getElementById('loginPass').value;
-            try { await signInWithEmailAndPassword(auth, email, pass); } 
-            catch (error) { alert("Login failed: " + error.message); }
-        });
+            
+            if(!email || !pass) return alert("Please enter both Email and Password.");
+
+            try { 
+                await signInWithEmailAndPassword(auth, email, pass); 
+                // Auth listener will handle the redirect
+            } 
+            catch (error) { 
+                alert("Login Error:\n" + error.message); 
+            }
+        };
 
         window.logout = () => signOut(auth);
 
@@ -152,24 +170,32 @@
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUserId = user.uid;
-                const userDoc = await getDoc(doc(db, "users", user.uid));
-                
-                if (userDoc.exists()) {
-                    const userData = userDoc.data();
-                    if (userData.isBlocked === true) {
-                        alert("ACCESS DENIED: Blocked by Administrator.");
-                        await signOut(auth);
-                        window.location.reload();
-                        return;
-                    }
-
-                    currentUserRole = userData.role;
-                    document.getElementById('userNameDisplay').innerText = userData.name;
-                    document.getElementById('userRoleDisplay').innerText = currentUserRole;
+                try {
+                    const userDoc = await getDoc(doc(db, "users", user.uid));
                     
-                    document.getElementById('loginSection').classList.add('hidden');
-                    document.getElementById('dashboardSection').classList.remove('hidden');
-                    setupUI();
+                    if (userDoc.exists()) {
+                        const userData = userDoc.data();
+                        
+                        if (userData.isBlocked === true) {
+                            alert("ACCESS DENIED: Blocked by Administrator.");
+                            await signOut(auth);
+                            window.location.reload();
+                            return;
+                        }
+
+                        currentUserRole = userData.role;
+                        document.getElementById('userNameDisplay').innerText = userData.name;
+                        document.getElementById('userRoleDisplay').innerText = currentUserRole;
+                        
+                        document.getElementById('loginSection').classList.add('hidden');
+                        document.getElementById('dashboardSection').classList.remove('hidden');
+                        setupUI();
+                    } else {
+                        // User exists in Auth but not in Database (Rare edge case)
+                        alert("Account Error: Profile not found.");
+                    }
+                } catch(e) {
+                    alert("Database Connection Error: " + e.message);
                 }
             } else {
                 document.getElementById('loginSection').classList.remove('hidden');
@@ -196,7 +222,6 @@
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option><option value="HR">HR</option>';
-                // CLEAN START FOR MD
                 logsList.innerHTML = '<p class="text-muted text-center mt-4">Dashboard Clean. Use search to view logs.</p>';
                 return;
             }
@@ -207,14 +232,14 @@
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option>';
-                loadLogs(); // Show HR own logs
+                loadLogs(); 
                 return;
             }
 
             // 3. EMPLOYEE VIEW
             if (currentUserRole === 'Employee') {
                 logCard.classList.remove('hidden');
-                loadLogs(); // Show Employee own logs
+                loadLogs(); 
             }
         }
 
@@ -366,21 +391,13 @@
         window.loadLogs = async (targetUid = null) => {
             const list = document.getElementById('logsList');
             
-            // STRICT LOGIC:
-            // 1. If we are Searching (targetUid exists), fetch THAT user.
-            // 2. If NOT searching:
-            //    - MD gets NOTHING.
-            //    - HR/Employee gets THEIR OWN logs.
-            
             let uidToFetch = targetUid;
-
             if (!uidToFetch) {
                 if (currentUserRole === 'MD') {
-                    // MD Default View: Empty
                     list.innerHTML = '<p class="text-muted text-center mt-4">Dashboard Clean. Use search to view logs.</p>';
                     return;
                 }
-                uidToFetch = currentUserId; // HR/Employee Default View
+                uidToFetch = currentUserId; 
             }
 
             const q = query(collection(db, "work_logs"), where("uid", "==", uidToFetch), orderBy("timestamp", "desc"));
@@ -398,7 +415,6 @@
                     const data = docSnap.data();
                     const date = data.timestamp ? data.timestamp.toDate().toLocaleString() : 'Just now';
                     
-                    // NO DELETE BUTTON HERE. Logs are permanent.
                     const html = `
                         <div class="card log-card p-2 shadow-sm">
                             <div class="d-flex justify-content-between">
@@ -416,10 +432,3 @@
         };
 
         window.deleteEntireEmployee = async () => {
-            if (!searchedUserUid || currentUserRole !== 'MD') return;
-            if (confirm(`⚠ PERMANENTLY DELETE?\n\nThis removes the User Profile AND all Work History.`)) {
-                try {
-                    await deleteDoc(doc(db, "users", searchedUserUid));
-                    const q = query(collection(db, "work_logs"), where("uid", "==", searchedUserUid));
-                    const snapshot = await getDocs(q);
-                    const batch = writeBatch(db)
