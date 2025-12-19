@@ -48,12 +48,18 @@
                 <div id="logWorkCard" class="card p-3 mb-4 shadow-sm">
                     <h5 class="fw-bold text-primary">📝 Log My Work</h5>
                     <form id="workForm">
-                        <div class="mb-2">
-                            <label>Duration (Hours)</label>
-                            <input type="number" id="workDuration" step="0.5" class="form-control" required>
+                        <div class="row mb-2">
+                            <div class="col-6">
+                                <label class="small text-muted">From Time</label>
+                                <input type="time" id="workStart" class="form-control" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="small text-muted">To Time</label>
+                                <input type="time" id="workEnd" class="form-control" required>
+                            </div>
                         </div>
                         <div class="mb-2">
-                            <label>Description</label>
+                            <label class="small text-muted">Description</label>
                             <textarea id="workDesc" class="form-control" rows="3" required></textarea>
                         </div>
                         <button type="submit" class="btn btn-primary w-100">Submit Log</button>
@@ -103,7 +109,11 @@
                 <div class="card p-3 shadow-sm">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h5 class="m-0 fw-bold">Work History</h5>
-                        <button class="btn btn-sm btn-light" onclick="loadLogs()">Refresh</button>
+                        <div class="d-flex gap-2">
+                            <input type="date" id="filterDate" class="form-control form-control-sm" onchange="loadLogs()">
+                            <button class="btn btn-sm btn-light border" onclick="clearDateFilter()">All</button>
+                            <button class="btn btn-sm btn-dark" onclick="loadLogs()">Refresh</button>
+                        </div>
                     </div>
                     <div id="logsList" style="max-height: 600px; overflow-y: auto;">
                         <p class="text-muted">Loading...</p>
@@ -148,7 +158,6 @@
             
             try {
                 await signInWithEmailAndPassword(auth, email, pass);
-                // Auth listener handles redirect
             } catch (error) {
                 alert("Login Failed: " + error.message);
             }
@@ -156,33 +165,24 @@
 
         window.logout = () => signOut(auth);
 
-        // --- 3. AUTH LISTENER (Main Logic) ---
+        // --- 3. AUTH LISTENER ---
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUserId = user.uid;
-                
-                // Get User Profile
                 const docSnap = await getDoc(doc(db, "users", user.uid));
                 if (docSnap.exists()) {
                     const data = docSnap.data();
-                    
-                    // Block Check
                     if (data.isBlocked) {
                         alert("Your account is blocked.");
                         await signOut(auth);
                         return;
                     }
-
-                    // Set Role & UI
                     currentUserRole = data.role;
                     document.getElementById('userNameDisplay').innerText = data.name;
                     document.getElementById('userRoleDisplay').innerText = currentUserRole;
-                    
-                    // Switch Screens
                     document.getElementById('loginSection').classList.add('hidden');
                     document.getElementById('dashboardSection').classList.remove('hidden');
-                    
-                    setupDashboard(); // Build UI based on Role
+                    setupDashboard();
                 }
             } else {
                 document.getElementById('loginSection').classList.remove('hidden');
@@ -190,7 +190,7 @@
             }
         });
 
-        // --- 4. DASHBOARD SETUP (Strict Visibility) ---
+        // --- 4. DASHBOARD SETUP ---
         function setupDashboard() {
             const logCard = document.getElementById('logWorkCard');
             const adminCard = document.getElementById('adminToolsCard');
@@ -198,54 +198,63 @@
             const roleSelect = document.getElementById('newRole');
             const logsList = document.getElementById('logsList');
             
-            // Reset All to Hidden first
             logCard.classList.add('hidden');
             adminCard.classList.add('hidden');
             searchPanel.classList.add('hidden');
             document.getElementById('manageUserPanel').classList.add('hidden');
 
-            // -- MD VIEW --
             if (currentUserRole === 'MD') {
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option><option value="HR">HR</option>';
-                // CLEAN LIST FOR MD
                 logsList.innerHTML = '<div class="text-center p-5 text-muted"><h4>👋 Dashboard Ready</h4><p>Use the search bar above to view employee data.</p></div>';
-            } 
-            // -- HR VIEW --
-            else if (currentUserRole === 'HR') {
+            } else if (currentUserRole === 'HR') {
                 logCard.classList.remove('hidden');
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option>';
-                loadLogs(); // Show HR's own logs
-            } 
-            // -- EMPLOYEE VIEW --
-            else {
+                loadLogs();
+            } else {
                 logCard.classList.remove('hidden');
-                loadLogs(); // Show Employee's own logs
+                loadLogs();
             }
         }
 
-        // --- 5. LOG WORK ---
+        // --- 5. LOG WORK (Time Calculation) ---
         document.getElementById('workForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const duration = document.getElementById('workDuration').value;
+            const start = document.getElementById('workStart').value;
+            const end = document.getElementById('workEnd').value;
             const desc = document.getElementById('workDesc').value;
             const name = document.getElementById('userNameDisplay').innerText;
+
+            if(!start || !end) return alert("Please select start and end time.");
+
+            // Calculate Duration
+            const s = new Date(`1970-01-01T${start}Z`);
+            const eTime = new Date(`1970-01-01T${end}Z`);
+            let diffMs = eTime - s;
+            if(diffMs < 0) diffMs += 24 * 60 * 60 * 1000; // Handle overnight
+            const diffHrs = (diffMs / (1000 * 60 * 60)).toFixed(1);
+            
+            // Get Date String for Filtering (YYYY-MM-DD)
+            const today = new Date().toISOString().split('T')[0];
 
             try {
                 await addDoc(collection(db, "work_logs"), {
                     uid: currentUserId,
                     name: name,
                     name_lower: name.toLowerCase(),
-                    duration: duration,
+                    startTime: start,
+                    endTime: end,
+                    duration: diffHrs,
+                    dateString: today, // Used for date filtering
                     description: desc,
                     timestamp: serverTimestamp()
                 });
                 document.getElementById('workForm').reset();
                 if(currentUserRole !== 'MD' && !searchedUserUid) loadLogs();
-                alert("Work Logged!");
+                alert(`Logged: ${diffHrs} Hours`);
             } catch (error) { alert("Error: " + error.message); }
         });
 
@@ -260,11 +269,9 @@
 
             if(confirm(`Create ${role}: ${name}?`)) {
                 try {
-                    // Create secondary app to not logout current user
                     const tempApp = initializeApp(firebaseConfig, "TempApp");
                     const tempAuth = getAuth(tempApp);
                     const cred = await createUserWithEmailAndPassword(tempAuth, email, pass);
-                    
                     await setDoc(doc(db, "users", cred.user.uid), {
                         name: name,
                         name_lower: name.toLowerCase(),
@@ -272,11 +279,8 @@
                         email: email,
                         isBlocked: false
                     });
-
-                    // Cleanup
                     await signOut(tempAuth);
                     alert("User Created!");
-                    
                     document.getElementById('newEmail').value = "";
                     document.getElementById('newPass').value = "";
                     document.getElementById('newName').value = "";
@@ -284,38 +288,22 @@
             }
         };
 
-        // --- 7. SEARCH (Triple Fallback) ---
+        // --- 7. SEARCH ---
         window.searchUserAndLogs = async () => {
             const input = document.getElementById('searchInput').value.trim();
             if(!input) return;
-
             const list = document.getElementById('logsList');
-            const managePanel = document.getElementById('manageUserPanel');
-            const btnDelete = document.getElementById('btnDeleteUser');
-            
             list.innerHTML = '<p class="text-center mt-4">Searching...</p>';
-            managePanel.classList.add('hidden');
-            searchedUserUid = null;
-
+            
             let targetUid = null;
             let targetName = null;
             let isBlocked = false;
 
             try {
-                // Search 1: Lowercase Name
                 let q = query(collection(db, "users"), where("name_lower", "==", input.toLowerCase()));
                 let snap = await getDocs(q);
-
-                // Search 2: Exact Name
-                if(snap.empty) {
-                    q = query(collection(db, "users"), where("name", "==", input));
-                    snap = await getDocs(q);
-                }
-                // Search 3: Email
-                if(snap.empty) {
-                    q = query(collection(db, "users"), where("email", "==", input));
-                    snap = await getDocs(q);
-                }
+                if(snap.empty) { q = query(collection(db, "users"), where("name", "==", input)); snap = await getDocs(q); }
+                if(snap.empty) { q = query(collection(db, "users"), where("email", "==", input)); snap = await getDocs(q); }
 
                 if(!snap.empty) {
                     const d = snap.docs[0];
@@ -325,45 +313,37 @@
                 }
 
                 if(targetUid) {
-                    // User Found
                     searchedUserUid = targetUid;
                     searchedUserIsBlocked = isBlocked;
-
-                    managePanel.classList.remove('hidden');
+                    document.getElementById('manageUserPanel').classList.remove('hidden');
                     document.getElementById('targetUserName').innerText = targetName;
                     
                     const blockBtn = document.getElementById('btnBlockUser');
-                    if(isBlocked) {
-                        blockBtn.innerText = "UNBLOCK";
-                        blockBtn.className = "btn btn-success btn-sm fw-bold me-2";
-                        document.getElementById('targetUserStatus').innerText = "BLOCKED";
-                        document.getElementById('targetUserStatus').className = "text-danger fw-bold";
-                    } else {
-                        blockBtn.innerText = "BLOCK";
-                        blockBtn.className = "btn btn-warning btn-sm fw-bold me-2";
-                        document.getElementById('targetUserStatus').innerText = "Active";
-                        document.getElementById('targetUserStatus').className = "text-success";
-                    }
+                    blockBtn.innerText = isBlocked ? "UNBLOCK" : "BLOCK";
+                    blockBtn.className = isBlocked ? "btn btn-success btn-sm fw-bold me-2" : "btn btn-warning btn-sm fw-bold me-2";
+                    document.getElementById('targetUserStatus').innerText = isBlocked ? "BLOCKED" : "Active";
+                    document.getElementById('targetUserStatus').className = isBlocked ? "text-danger fw-bold" : "text-success";
 
-                    // Only MD can Delete Employee
-                    if(currentUserRole === 'MD') btnDelete.classList.remove('hidden');
-                    else btnDelete.classList.add('hidden');
+                    if(currentUserRole === 'MD') document.getElementById('btnDeleteUser').classList.remove('hidden');
+                    else document.getElementById('btnDeleteUser').classList.add('hidden');
 
                     loadLogs(targetUid);
                 } else {
+                    document.getElementById('manageUserPanel').classList.add('hidden');
                     list.innerHTML = '<p class="text-center text-danger mt-4">User not found.</p>';
                 }
-
-            } catch(e) {
-                console.error(e);
-                list.innerHTML = '<p class="text-danger">Search Error. Check Console.</p>';
-            }
+            } catch(e) { console.error(e); }
         };
 
         window.resetSearch = () => {
             document.getElementById('searchInput').value = "";
             searchedUserUid = null;
-            setupDashboard(); // Re-sets clean state for MD
+            setupDashboard();
+        };
+
+        window.clearDateFilter = () => {
+            document.getElementById('filterDate').value = "";
+            loadLogs();
         };
 
         window.toggleBlockUser = async () => {
@@ -374,68 +354,79 @@
             }
         };
 
-        // --- 8. LOAD LOGS (Clean - No Delete Buttons) ---
+        // --- 8. LOAD LOGS (Clean Layout, Time Range, Date Filter) ---
         window.loadLogs = async (targetUid = null) => {
             const list = document.getElementById('logsList');
+            const dateFilter = document.getElementById('filterDate').value;
             
-            // Logic: If Searching -> Show Target. If Not -> Show Self. MD Default -> Show None.
-            let uid = targetUid;
+            let uid = targetUid || searchedUserUid;
             if(!uid) {
-                if(currentUserRole === 'MD') {
-                    // MD Should NOT see anything by default
-                    return; 
-                }
-                uid = currentUserId;
+                if(currentUserRole === 'MD') return; // MD clean by default
+                uid = currentUserId; 
             }
 
-            const q = query(collection(db, "work_logs"), where("uid", "==", uid), orderBy("timestamp", "desc"));
+            // Construct Query
+            let q;
+            if (dateFilter) {
+                // Filter by specific Date String
+                q = query(collection(db, "work_logs"), 
+                    where("uid", "==", uid), 
+                    where("dateString", "==", dateFilter), 
+                    orderBy("timestamp", "desc"));
+            } else {
+                // Show All
+                q = query(collection(db, "work_logs"), 
+                    where("uid", "==", uid), 
+                    orderBy("timestamp", "desc"));
+            }
             
             try {
                 const snap = await getDocs(q);
                 list.innerHTML = '';
 
                 if(snap.empty) {
-                    list.innerHTML = '<p class="text-muted text-center mt-4">No work logs found.</p>';
+                    list.innerHTML = '<p class="text-muted text-center mt-4">No logs found for this selection.</p>';
                     return;
                 }
 
                 snap.forEach(d => {
                     const data = d.data();
-                    const time = data.timestamp ? data.timestamp.toDate().toLocaleString() : '';
+                    const dateDisplay = data.timestamp ? data.timestamp.toDate().toLocaleDateString() : '';
                     
-                    // PURE HTML - NO BUTTONS HERE
+                    // CLEAN UI: No Name, Time Range shown
                     list.innerHTML += `
                         <div class="card log-card p-3 shadow-sm">
-                            <div class="d-flex justify-content-between">
-                                <span class="fw-bold">${data.name} <span class="text-muted small fw-normal">(${time})</span></span>
-                                <span class="badge bg-primary">${data.duration} Hrs</span>
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <span class="badge bg-secondary mb-1">${dateDisplay}</span>
+                                    <h6 class="mb-0 fw-bold text-dark">${data.startTime} - ${data.endTime}</h6>
+                                </div>
+                                <span class="badge bg-primary fs-6">${data.duration} Hrs</span>
                             </div>
-                            <p class="mb-0 mt-2 text-dark">${data.description}</p>
+                            <div class="mt-2 pt-2 border-top">
+                                <p class="mb-0 text-secondary">${data.description}</p>
+                            </div>
                         </div>
                     `;
                 });
             } catch(e) {
                 console.error(e);
-                list.innerHTML = '<p class="text-danger">Error loading logs.</p>';
+                list.innerHTML = '<p class="text-danger">Error. Note: Date filtering requires a Firestore Index. Check Console if this fails.</p>';
+                if(e.message.includes("index")) alert("Admin: Create index via Console link (F12).");
             }
         };
 
-        // --- 9. DELETE ENTIRE EMPLOYEE (MD Only) ---
+        // --- 9. DELETE EMPLOYEE ---
         window.deleteEntireEmployee = async () => {
             if(!searchedUserUid || currentUserRole !== 'MD') return;
-
-            if(confirm("⚠ WARNING: This will DELETE the user profile AND ALL their work history forever.")) {
+            if(confirm("⚠ WARNING: DELETE USER & ALL DATA?")) {
                 try {
-                    // 1. Delete Profile
                     await deleteDoc(doc(db, "users", searchedUserUid));
-                    
-                    // 2. Delete Logs
                     const q = query(collection(db, "work_logs"), where("uid", "==", searchedUserUid));
                     const snap = await getDocs(q);
                     const batch = writeBatch(db);
                     snap.forEach(d => batch.delete(d.ref));
                     await batch.commit();
-
                     alert("User Deleted.");
                     resetSearch();
                 } catch(e) { alert("Error: " + e.message); }
