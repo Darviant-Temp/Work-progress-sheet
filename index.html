@@ -79,7 +79,7 @@
                 <div id="searchPanel" class="card p-3 mb-3 hidden bg-light">
                     <label class="form-label fw-bold">🔍 Search Employee Work</label>
                     <div class="input-group">
-                        <input type="text" id="searchInput" class="form-control" placeholder="Enter Name (Case insensitive)...">
+                        <input type="text" id="searchInput" class="form-control" placeholder="Enter Name or Email...">
                         <button class="btn btn-primary" onclick="searchUserAndLogs()">Search</button>
                         <button class="btn btn-outline-secondary" onclick="resetSearch()">Clear</button>
                     </div>
@@ -174,7 +174,6 @@
                     
                     setupUI();
                 } else {
-                    // Handle case where user deleted but login persists
                      document.getElementById('loginSection').classList.add('hidden');
                      document.getElementById('dashboardSection').classList.remove('hidden');
                 }
@@ -192,7 +191,7 @@
             const roleSelect = document.getElementById('newRole');
             const logsList = document.getElementById('logsList');
             
-            // Default: Hide all admin stuff
+            // Reset
             adminCard.classList.add('hidden');
             searchPanel.classList.add('hidden');
 
@@ -223,7 +222,7 @@
             }
         }
 
-        // --- CREATE USER (With Block Status) ---
+        // --- CREATE USER ---
         window.createNewUser = async () => {
             const email = document.getElementById('newEmail').value;
             const pass = document.getElementById('newPass').value;
@@ -243,7 +242,7 @@
                         name_lower: name.toLowerCase(),
                         role: role,
                         email: email,
-                        isBlocked: false // Default access is allowed
+                        isBlocked: false
                     });
 
                     await signOut(secondaryAuth);
@@ -278,7 +277,7 @@
             } catch (error) { alert("Error: " + error.message); }
         });
 
-        // --- SEARCH USER & LOGS ---
+        // --- SEARCH USER (TRIPLE FALLBACK SYSTEM) ---
         window.searchUserAndLogs = async () => {
             const rawTerm = document.getElementById('searchInput').value.trim();
             if(!rawTerm) return;
@@ -297,28 +296,32 @@
             let targetStatus = false;
 
             try {
-                // Search Logic
-                const userQuery = query(collection(db, "users"), where("name_lower", "==", term));
-                const userSnap = await getDocs(userQuery);
+                // 1. Try Smart Search (Lowercase Name)
+                let userQuery = query(collection(db, "users"), where("name_lower", "==", term));
+                let userSnap = await getDocs(userQuery);
 
+                // 2. Fallback: Try Exact Name (For old users like Pooja)
+                if (userSnap.empty) {
+                    userQuery = query(collection(db, "users"), where("name", "==", rawTerm));
+                    userSnap = await getDocs(userQuery);
+                }
+
+                // 3. Fallback: Try Email ID
+                if (userSnap.empty) {
+                    userQuery = query(collection(db, "users"), where("email", "==", rawTerm));
+                    userSnap = await getDocs(userQuery);
+                }
+
+                // RESULT CHECK
                 if (!userSnap.empty) {
                     const uDoc = userSnap.docs[0];
                     targetUid = uDoc.id;
                     targetName = uDoc.data().name;
                     targetStatus = uDoc.data().isBlocked || false;
-                } else {
-                    const emailQuery = query(collection(db, "users"), where("email", "==", rawTerm));
-                    const emailSnap = await getDocs(emailQuery);
-                    if(!emailSnap.empty) {
-                        const uDoc = emailSnap.docs[0];
-                        targetUid = uDoc.id;
-                        targetName = uDoc.data().name;
-                        targetStatus = uDoc.data().isBlocked || false;
-                    }
                 }
 
                 if (targetUid) {
-                    // Update Global Search Vars
+                    // Update Global Vars
                     searchedUserUid = targetUid;
                     searchedUserIsBlocked = targetStatus;
 
@@ -326,7 +329,7 @@
                     managePanel.classList.remove('hidden');
                     document.getElementById('targetUserName').innerText = targetName;
                     
-                    // Update Block Button Text
+                    // Update Block Button Style
                     const blockBtn = document.getElementById('btnBlockUser');
                     if (targetStatus) {
                         blockBtn.innerText = "Unblock Access";
@@ -347,10 +350,10 @@
                         btnDelete.classList.add('hidden');
                     }
 
-                    // Load logs
+                    // Load logs for this user
                     loadLogs(targetUid);
                 } else {
-                    list.innerHTML = '<p class="text-danger">User not found.</p>';
+                    list.innerHTML = '<p class="text-danger">User not found. Try exact Email ID.</p>';
                 }
 
             } catch(e) {
@@ -367,23 +370,16 @@
             setupUI();
         }
 
-        // --- BLOCK / UNBLOCK USER ---
+        // --- BLOCK / UNBLOCK ---
         window.toggleBlockUser = async () => {
             if (!searchedUserUid) return;
-            
             const action = searchedUserIsBlocked ? "UNBLOCK" : "BLOCK";
-            if(confirm(`Are you sure you want to ${action} this user's access?`)) {
+            if(confirm(`Confirm: ${action} access for this user?`)) {
                 try {
                     const userRef = doc(db, "users", searchedUserUid);
-                    await updateDoc(userRef, {
-                        isBlocked: !searchedUserIsBlocked
-                    });
-                    
-                    // Refresh the search view to show new status
-                    searchUserAndLogs();
-                } catch (e) {
-                    alert("Error updating status: " + e.message);
-                }
+                    await updateDoc(userRef, { isBlocked: !searchedUserIsBlocked });
+                    searchUserAndLogs(); // Refresh view
+                } catch (e) { alert("Error: " + e.message); }
             }
         }
 
@@ -411,7 +407,6 @@
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
                     const date = data.timestamp ? data.timestamp.toDate().toLocaleString() : 'Just now';
-                    
                     const html = `
                         <div class="card log-card p-2 shadow-sm">
                             <div class="d-flex justify-content-between">
@@ -428,7 +423,7 @@
             }
         };
 
-        // --- DELETE ENTIRE EMPLOYEE (MD ONLY) ---
+        // --- DELETE EMPLOYEE ---
         window.deleteEntireEmployee = async () => {
             if (!searchedUserUid || currentUserRole !== 'MD') return;
             if (confirm(`⚠ PERMANENTLY DELETE?\n\nThis removes the User Profile AND all Work History.`)) {
