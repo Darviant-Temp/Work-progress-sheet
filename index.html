@@ -94,7 +94,7 @@
                         <div>
                             <button id="btnBlockUser" onclick="toggleBlockUser()" class="btn btn-warning fw-bold me-2">Block Access</button>
                             
-                            <button id="btnDeleteUser" onclick="deleteEntireEmployee()" class="btn btn-danger fw-bold hidden">DELETE DATA</button>
+                            <button id="btnDeleteUser" onclick="deleteEntireEmployee()" class="btn btn-danger fw-bold hidden">DELETE ALL DATA</button>
                         </div>
                     </div>
                 </div>
@@ -148,18 +148,16 @@
 
         window.logout = () => signOut(auth);
 
-        // --- AUTH STATE & BLOCK CHECK ---
+        // --- AUTH STATE ---
         onAuthStateChanged(auth, async (user) => {
             if (user) {
                 currentUserId = user.uid;
-                
                 const userDoc = await getDoc(doc(db, "users", user.uid));
+                
                 if (userDoc.exists()) {
                     const userData = userDoc.data();
-                    
-                    // SECURITY CHECK: Is this user blocked?
                     if (userData.isBlocked === true) {
-                        alert("ACCESS DENIED: Your account has been blocked by the Administrator.");
+                        alert("ACCESS DENIED: Blocked by Administrator.");
                         await signOut(auth);
                         window.location.reload();
                         return;
@@ -171,11 +169,7 @@
                     
                     document.getElementById('loginSection').classList.add('hidden');
                     document.getElementById('dashboardSection').classList.remove('hidden');
-                    
                     setupUI();
-                } else {
-                     document.getElementById('loginSection').classList.add('hidden');
-                     document.getElementById('dashboardSection').classList.remove('hidden');
                 }
             } else {
                 document.getElementById('loginSection').classList.remove('hidden');
@@ -194,6 +188,7 @@
             // Reset
             adminCard.classList.add('hidden');
             searchPanel.classList.add('hidden');
+            document.getElementById('manageUserPanel').classList.add('hidden');
 
             // 1. MD VIEW
             if (currentUserRole === 'MD') {
@@ -201,7 +196,8 @@
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option><option value="HR">HR</option>';
-                logsList.innerHTML = '<p class="text-muted text-center mt-4">Dashboard Clean. Use search to view Employee/HR work.</p>';
+                // CLEAN START FOR MD
+                logsList.innerHTML = '<p class="text-muted text-center mt-4">Dashboard Clean. Use search to view logs.</p>';
                 return;
             }
 
@@ -211,14 +207,14 @@
                 adminCard.classList.remove('hidden');
                 searchPanel.classList.remove('hidden');
                 roleSelect.innerHTML = '<option value="Employee">Employee</option>';
-                loadLogs(); 
+                loadLogs(); // Show HR own logs
                 return;
             }
 
             // 3. EMPLOYEE VIEW
             if (currentUserRole === 'Employee') {
                 logCard.classList.remove('hidden');
-                loadLogs();
+                loadLogs(); // Show Employee own logs
             }
         }
 
@@ -247,8 +243,8 @@
 
                     await signOut(secondaryAuth);
                     await deleteApp(secondaryApp);
-
                     alert("User Created Successfully!");
+                    
                     document.getElementById('newName').value = "";
                     document.getElementById('newEmail').value = "";
                     document.getElementById('newPass').value = "";
@@ -277,7 +273,7 @@
             } catch (error) { alert("Error: " + error.message); }
         });
 
-        // --- SEARCH USER (TRIPLE FALLBACK SYSTEM) ---
+        // --- SEARCH LOGIC ---
         window.searchUserAndLogs = async () => {
             const rawTerm = document.getElementById('searchInput').value.trim();
             if(!rawTerm) return;
@@ -296,40 +292,32 @@
             let targetStatus = false;
 
             try {
-                // 1. Try Smart Search (Lowercase Name)
+                // Triple Search Strategy
                 let userQuery = query(collection(db, "users"), where("name_lower", "==", term));
                 let userSnap = await getDocs(userQuery);
 
-                // 2. Fallback: Try Exact Name (For old users like Pooja)
                 if (userSnap.empty) {
                     userQuery = query(collection(db, "users"), where("name", "==", rawTerm));
                     userSnap = await getDocs(userQuery);
                 }
-
-                // 3. Fallback: Try Email ID
                 if (userSnap.empty) {
                     userQuery = query(collection(db, "users"), where("email", "==", rawTerm));
                     userSnap = await getDocs(userQuery);
                 }
 
-                // RESULT CHECK
                 if (!userSnap.empty) {
                     const uDoc = userSnap.docs[0];
                     targetUid = uDoc.id;
                     targetName = uDoc.data().name;
                     targetStatus = uDoc.data().isBlocked || false;
-                }
 
-                if (targetUid) {
-                    // Update Global Vars
+                    // Setup Search Result UI
                     searchedUserUid = targetUid;
                     searchedUserIsBlocked = targetStatus;
 
-                    // Show Manage Panel
                     managePanel.classList.remove('hidden');
                     document.getElementById('targetUserName').innerText = targetName;
                     
-                    // Update Block Button Style
                     const blockBtn = document.getElementById('btnBlockUser');
                     if (targetStatus) {
                         blockBtn.innerText = "Unblock Access";
@@ -343,23 +331,16 @@
                         document.getElementById('targetUserStatus').className = "text-success";
                     }
 
-                    // Show Delete Button only for MD
-                    if (currentUserRole === 'MD') {
-                        btnDelete.classList.remove('hidden');
-                    } else {
-                        btnDelete.classList.add('hidden');
-                    }
+                    if (currentUserRole === 'MD') btnDelete.classList.remove('hidden');
+                    else btnDelete.classList.add('hidden');
 
-                    // Load logs for this user
                     loadLogs(targetUid);
                 } else {
-                    list.innerHTML = '<p class="text-danger">User not found. Try exact Email ID.</p>';
+                    list.innerHTML = '<p class="text-danger">User not found.</p>';
                 }
-
             } catch(e) {
                 console.error(e);
                 list.innerHTML = `<p class="text-danger">Error: ${e.message}</p>`;
-                if(e.message.includes("index")) alert("System Note: Building Index...");
             }
         }
 
@@ -367,30 +348,39 @@
             document.getElementById('searchInput').value = "";
             document.getElementById('manageUserPanel').classList.add('hidden');
             searchedUserUid = null;
-            setupUI();
+            setupUI(); // Resets MD to empty list
         }
 
-        // --- BLOCK / UNBLOCK ---
         window.toggleBlockUser = async () => {
             if (!searchedUserUid) return;
             const action = searchedUserIsBlocked ? "UNBLOCK" : "BLOCK";
             if(confirm(`Confirm: ${action} access for this user?`)) {
                 try {
-                    const userRef = doc(db, "users", searchedUserUid);
-                    await updateDoc(userRef, { isBlocked: !searchedUserIsBlocked });
-                    searchUserAndLogs(); // Refresh view
+                    await updateDoc(doc(db, "users", searchedUserUid), { isBlocked: !searchedUserIsBlocked });
+                    searchUserAndLogs();
                 } catch (e) { alert("Error: " + e.message); }
             }
         }
 
-        // --- LOAD LOGS ---
+        // --- LOAD LOGS (Corrected) ---
         window.loadLogs = async (targetUid = null) => {
             const list = document.getElementById('logsList');
-            let uidToFetch = targetUid || (currentUserRole === 'MD' ? null : currentUserId);
+            
+            // STRICT LOGIC:
+            // 1. If we are Searching (targetUid exists), fetch THAT user.
+            // 2. If NOT searching:
+            //    - MD gets NOTHING.
+            //    - HR/Employee gets THEIR OWN logs.
+            
+            let uidToFetch = targetUid;
 
             if (!uidToFetch) {
-                if (currentUserRole === 'MD') return;
-                uidToFetch = currentUserId;
+                if (currentUserRole === 'MD') {
+                    // MD Default View: Empty
+                    list.innerHTML = '<p class="text-muted text-center mt-4">Dashboard Clean. Use search to view logs.</p>';
+                    return;
+                }
+                uidToFetch = currentUserId; // HR/Employee Default View
             }
 
             const q = query(collection(db, "work_logs"), where("uid", "==", uidToFetch), orderBy("timestamp", "desc"));
@@ -407,6 +397,8 @@
                 querySnapshot.forEach((docSnap) => {
                     const data = docSnap.data();
                     const date = data.timestamp ? data.timestamp.toDate().toLocaleString() : 'Just now';
+                    
+                    // NO DELETE BUTTON HERE. Logs are permanent.
                     const html = `
                         <div class="card log-card p-2 shadow-sm">
                             <div class="d-flex justify-content-between">
@@ -423,7 +415,6 @@
             }
         };
 
-        // --- DELETE EMPLOYEE ---
         window.deleteEntireEmployee = async () => {
             if (!searchedUserUid || currentUserRole !== 'MD') return;
             if (confirm(`⚠ PERMANENTLY DELETE?\n\nThis removes the User Profile AND all Work History.`)) {
