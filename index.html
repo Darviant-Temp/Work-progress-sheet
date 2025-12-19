@@ -422,14 +422,4 @@
                     await deleteDoc(doc(db, "users", searchedUserUid));
                     const q = query(collection(db, "work_logs"), where("uid", "==", searchedUserUid));
                     const snapshot = await getDocs(q);
-                    const batch = writeBatch(db);
-                    snapshot.forEach((doc) => batch.delete(doc.ref));
-                    await batch.commit();
-                    alert("User Deleted.");
-                    resetSearch();
-                } catch (e) { alert("Error: " + e.message); }
-            }
-        }
-    </script>
-</body>
-</html>
+                    const batch = writeBatch(db)
